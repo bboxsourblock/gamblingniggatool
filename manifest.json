@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Kick Control Panel",
+  "version": "1.0.0",
+  "description": "Advanced automation control panel for Kick.com with chat automation, flood detection, and manual messaging",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "notifications"
+  ],
+  "host_permissions": [
+    "*://kick.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://kick.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Kick Control Panel"
+  }
+}
