@@ -16,9 +16,6 @@ class KickControlPanel {
         mode: 'any', // 'any' or 'trigger'
         threshold: 3,
         timeWindow: 10,
-        cooldown: 5,
-        isCooldownActive: false,
-        cooldownEndTime: null,
         actionType: 'send',
         enforceUniqueUsers: true,
         uniqueUserThreshold: 2, // How many unique users needed when enforcing unique users
@@ -49,8 +46,6 @@ class KickControlPanel {
     this.chatInterval = null;
     this.messageObserver = null;
     this.cleanupInterval = null;
-    this.cooldownTimeout = null;
-    this.pendingMessage = null; // Track if a message is being sent
     this.init();
   }
 
@@ -389,8 +384,6 @@ class KickControlPanel {
   }
 
   renderFloodTab(container) {
-    const cooldownRemaining = this.getCooldownRemaining();
-    
     container.innerHTML = `
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
         <h3 style="margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
@@ -451,33 +444,6 @@ class KickControlPanel {
         <input type="range" id="flood-window" min="5" max="60" value="${this.state.floodDetection.timeWindow}"
                style="width: 100%; height: 6px; background: #374151; border-radius: 3px; outline: none; cursor: pointer;">
       </div>
-
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 8px; color: #d1d5db;">
-          Cooldown: ${this.state.floodDetection.cooldown}s
-        </label>
-        <input type="range" id="flood-cooldown" min="1" max="60" value="${this.state.floodDetection.cooldown}"
-               style="width: 100%; height: 6px; background: #374151; border-radius: 3px; outline: none; cursor: pointer; margin-bottom: 8px;">
-        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #6b7280;">
-          <span>1s</span>
-          <span>60s</span>
-        </div>
-      </div>
-
-      ${cooldownRemaining > 0 ? `
-        <div style="
-          background: rgba(245, 158, 11, 0.1);
-          border: 1px solid rgba(245, 158, 11, 0.2);
-          border-radius: 6px;
-          padding: 8px 12px;
-          margin-bottom: 16px;
-          font-size: 11px;
-          color: #f59e0b;
-          text-align: center;
-        ">
-          ⏱️ Cooldown: ${cooldownRemaining}s remaining
-        </div>
-      ` : ''}
 
       <div style="margin-bottom: 16px;">
         <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #d1d5db; cursor: pointer;">
@@ -1045,12 +1011,6 @@ class KickControlPanel {
       this.refreshCurrentTab();
     });
 
-    document.getElementById('flood-cooldown')?.addEventListener('input', (e) => {
-      this.state.floodDetection.cooldown = parseInt(e.target.value);
-      this.saveState();
-      this.refreshCurrentTab();
-    });
-
     document.getElementById('enforce-unique')?.addEventListener('change', (e) => {
       this.state.floodDetection.enforceUniqueUsers = e.target.checked;
       this.saveState();
@@ -1388,16 +1348,6 @@ class KickControlPanel {
   handleFloodDetection(message, count) {
     this.state.stats.floodsDetected++;
 
-    // Check cooldown
-    if (this.state.floodDetection.isCooldownActive) {
-      this.addStatusMessage(
-        `Flood detected but cooldown active: "${message}" (${count}x)`,
-        'warning',
-        'Flood'
-      );
-      return;
-    }
-
     if (this.state.floodDetection.actionType === 'send') {
       this.sendMessage(message, 'flood');
       this.addStatusMessage(
@@ -1405,9 +1355,6 @@ class KickControlPanel {
         'success',
         'Flood'
       );
-      
-      // Start cooldown
-      this.startFloodCooldown();
     } else {
       this.addStatusMessage(
         `Flood detected: "${message}" (${count}x) - Warning only`,
@@ -1421,62 +1368,6 @@ class KickControlPanel {
 
     this.saveState();
     this.updateStats();
-  }
-
-  startFloodCooldown() {
-    this.state.floodDetection.isCooldownActive = true;
-    this.state.floodDetection.cooldownEndTime = Date.now() + (this.state.floodDetection.cooldown * 1000);
-    this.saveState();
-
-    // Clear existing timeout
-    if (this.cooldownTimeout) {
-      clearTimeout(this.cooldownTimeout);
-    }
-
-    // Set timeout to end cooldown
-    this.cooldownTimeout = setTimeout(() => {
-      this.state.floodDetection.isCooldownActive = false;
-      this.state.floodDetection.cooldownEndTime = null;
-      this.saveState();
-      
-      if (this.state.activeTab === 'flood') {
-        this.refreshCurrentTab();
-      }
-    }, this.state.floodDetection.cooldown * 1000);
-
-    // Start updating cooldown display
-    this.updateCooldownDisplay();
-  }
-
-  updateCooldownDisplay() {
-    if (!this.state.floodDetection.isCooldownActive) return;
-
-    const remaining = this.getCooldownRemaining();
-    if (remaining <= 0) {
-      this.state.floodDetection.isCooldownActive = false;
-      this.state.floodDetection.cooldownEndTime = null;
-      this.saveState();
-      
-      if (this.state.activeTab === 'flood') {
-        this.refreshCurrentTab();
-      }
-      return;
-    }
-
-    // Update display if on flood tab
-    if (this.state.activeTab === 'flood') {
-      this.refreshCurrentTab();
-    }
-
-    // Continue updating every second
-    setTimeout(() => this.updateCooldownDisplay(), 1000);
-  }
-
-  getCooldownRemaining() {
-    if (!this.state.floodDetection.isCooldownActive || !this.state.floodDetection.cooldownEndTime) {
-      return 0;
-    }
-    return Math.max(0, Math.ceil((this.state.floodDetection.cooldownEndTime - Date.now()) / 1000));
   }
 
   startPeriodicCleanup() {
@@ -1505,14 +1396,6 @@ class KickControlPanel {
   async sendMessage(message, source = 'manual') {
     console.log(`[SendMessage] Attempting to send: "${message}" (${source})`);
 
-    // Prevent double sending
-    if (this.pendingMessage === message) {
-      console.log('[SendMessage] Message already being sent, skipping');
-      return;
-    }
-
-    this.pendingMessage = message;
-
     // Find Kick's chat input with multiple selectors
     const inputDiv = document.querySelector('div[data-input="true"][contenteditable="true"]') ||
                      document.querySelector('div[data-test="chat-input"]') ||
@@ -1527,14 +1410,12 @@ class KickControlPanel {
     if (!inputDiv) {
       console.warn('[SendMessage] Chat input not found');
       this.addStatusMessage('Could not find chat input', 'error');
-      this.pendingMessage = null;
       return;
     }
 
     if (!sendButton) {
       console.warn('[SendMessage] Send button not found');
       this.addStatusMessage('Could not find send button', 'error');
-      this.pendingMessage = null;
       return;
     }
 
@@ -1606,11 +1487,6 @@ class KickControlPanel {
     } catch (error) {
       console.error('[SendMessage] Error:', error);
       this.addStatusMessage(`Failed to send message: ${error.message}`, 'error');
-    } finally {
-      // Clear pending message after a delay to prevent immediate re-sends
-      setTimeout(() => {
-        this.pendingMessage = null;
-      }, 1000);
     }
 
     this.saveState();
