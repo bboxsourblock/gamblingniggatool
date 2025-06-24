@@ -70,8 +70,48 @@ class KickControlPanel {
       try {
         const parsed = JSON.parse(savedState);
         this.state = { ...this.state, ...parsed };
+        
+        // Check and clear expired cooldown after loading state
+        this.checkAndClearCooldown();
       } catch (error) {
         console.log('Failed to load saved state:', error);
+      }
+    }
+  }
+
+  // New method to check and clear expired cooldowns
+  checkAndClearCooldown() {
+    if (this.state.floodDetection.isCooldownActive && this.state.floodDetection.cooldownEndTime) {
+      const now = Date.now();
+      const cooldownEndTime = this.state.floodDetection.cooldownEndTime;
+      
+      // If cooldown has expired, clear it
+      if (now >= cooldownEndTime) {
+        console.log('[Cooldown] Clearing expired cooldown state');
+        this.state.floodDetection.isCooldownActive = false;
+        this.state.floodDetection.cooldownEndTime = null;
+        
+        // Save the corrected state
+        this.saveState();
+        
+        this.addStatusMessage('Expired cooldown cleared on startup', 'info', 'Flood');
+      } else {
+        // Cooldown is still active, restart the timeout
+        const remainingTime = cooldownEndTime - now;
+        console.log(`[Cooldown] Restarting cooldown timer: ${Math.ceil(remainingTime / 1000)}s remaining`);
+        
+        this.cooldownTimeout = setTimeout(() => {
+          this.state.floodDetection.isCooldownActive = false;
+          this.state.floodDetection.cooldownEndTime = null;
+          this.saveState();
+          
+          if (this.state.activeTab === 'flood') {
+            this.refreshCurrentTab();
+          }
+        }, remainingTime);
+        
+        // Start updating cooldown display
+        this.updateCooldownDisplay();
       }
     }
   }
